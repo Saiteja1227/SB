@@ -16,6 +16,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.example.firstproject.dto.LoginRequest;
+import com.example.firstproject.service.RecaptchaService;
+
 @RestController
 @RequestMapping("/api")
 @CrossOrigin(origins = "*")
@@ -23,6 +26,9 @@ public class UserController {
 
     @Autowired
     UserRepository ur;
+
+    @Autowired
+    RecaptchaService recaptchaService;
 
     // REGISTER
     @PostMapping("/register")
@@ -45,17 +51,31 @@ public class UserController {
 
     // LOGIN
     @PostMapping("/login")
-    public ResponseEntity<String> login(@RequestBody Users u) {
+    public ResponseEntity<String> login(@RequestBody LoginRequest loginRequest) {
 
-        // Try to find user by username first, then by email
-        Users eu = this.ur.findByUsername(u.getUsername());
-        
-        // If not found by username, try email
-        if (eu == null && u.getEmail() != null) {
-            eu = this.ur.findByEmail(u.getEmail());
+        // Verify reCAPTCHA token
+        if (loginRequest.getRecaptchaToken() != null && !loginRequest.getRecaptchaToken().isEmpty()) {
+            boolean isHuman = recaptchaService.verifyToken(loginRequest.getRecaptchaToken(), "LOGIN");
+            if (!isHuman) {
+                return ResponseEntity
+                        .status(HttpStatus.FORBIDDEN)//403
+                        .body("reCAPTCHA verification failed. Please try again.");
+            }
         }
 
-        if (eu != null && eu.getPassword().equals(u.getPassword())) {
+        // Try to find user by username first, then by email
+        Users eu = null;
+        
+        if (loginRequest.getUsername() != null && !loginRequest.getUsername().isEmpty()) {
+            eu = this.ur.findByUsername(loginRequest.getUsername());
+        }
+        
+        // If not found by username, try email
+        if (eu == null && loginRequest.getEmail() != null && !loginRequest.getEmail().isEmpty()) {
+            eu = this.ur.findByEmail(loginRequest.getEmail());
+        }
+
+        if (eu != null && eu.getPassword().equals(loginRequest.getPassword())) {
             return ResponseEntity.ok("Login successful");//200
         }
 
@@ -181,7 +201,11 @@ public ResponseEntity<List<Users>> getUsers(
         System.out.println("🔗 Password Reset Link for " + user.getEmail() + ": " + resetLink);
         System.out.println("⏰ Token expires at: " + expiry);
         
-        return ResponseEntity.ok("If an account exists with this email, you will receive a password reset link.");
+        // FOR DEVELOPMENT: Return token in response (remove in production)
+        String response = String.format("{\"message\":\"Password reset token generated\",\"token\":\"%s\",\"resetLink\":\"%s\",\"expiresAt\":\"%s\"}", 
+            resetToken, resetLink, expiry.toString());
+        
+        return ResponseEntity.ok(response);
     }
     
     // VERIFY PASSWORD RESET TOKEN

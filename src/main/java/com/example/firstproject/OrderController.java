@@ -14,12 +14,13 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.example.firstproject.dto.OrderResponseDTO;
+import com.example.firstproject.service.OrderService;
+
 @RestController
-@RequestMapping("/api/orders")
 @CrossOrigin(origins = "*")
 public class OrderController {
     
@@ -35,14 +36,63 @@ public class OrderController {
     @Autowired
     private CartItemRepository cartItemRepository;
     
+    @Autowired
+    private OrderService orderService;
+    
     // Create order
-    @PostMapping
+    @PostMapping({"/orders", "/api/orders"})
     public ResponseEntity<?> createOrder(@RequestBody Map<String, Object> request) {
         try {
-            Long userId = Long.valueOf(request.get("userId").toString());
+            System.out.println("=== DEBUG: Creating order ===");
+            System.out.println("DEBUG: Request userId: " + request.get("userId"));
+            System.out.println("DEBUG: Request email: " + request.get("email"));
             
-            Users user = userRepository.findById(userId)
-                    .orElseThrow(() -> new RuntimeException("User not found"));
+            // Handle both numeric userId and Firebase UID
+            String userIdStr = request.get("userId").toString();
+            Users user = null;
+            
+            // Try to parse as Long first (for backward compatibility)
+            try {
+                Long userId = Long.valueOf(userIdStr);
+                user = userRepository.findById(userId).orElse(null);
+                System.out.println("DEBUG: Found user by numeric ID: " + (user != null));
+            } catch (NumberFormatException e) {
+                // Not a number, might be a Firebase UID - look up by email
+                System.out.println("DEBUG: userId is not numeric, treating as Firebase UID: " + userIdStr);
+                String email = request.get("email") != null ? request.get("email").toString() : null;
+                if (email != null) {
+                    user = userRepository.findByEmail(email);
+                    System.out.println("DEBUG: Found user by email '" + email + "': " + (user != null));
+                    
+                    // If user still not found, create a new user record with Firebase UID as username
+                    if (user == null) {
+                        System.out.println("DEBUG: Creating new user with email: " + email + ", username (Firebase UID): " + userIdStr);
+                        user = new Users();
+                        user.setEmail(email);
+                        user.setUsername(userIdStr); // Store Firebase UID as username!
+                        user.setPassword(""); // No password for Firebase users
+                        user = userRepository.save(user);
+                        System.out.println("DEBUG: Created new user with ID: " + user.getId());
+                    }
+                }
+            }
+            
+            // If user is still null after all attempts, use or create guest user
+            if (user == null) {
+                String guestEmail = request.get("email") != null ? request.get("email").toString() : "guest@smartcart.com";
+                
+                // Check if guest email already exists
+                user = userRepository.findByEmail(guestEmail);
+                
+                // Only create if doesn't exist
+                if (user == null) {
+                    user = new Users();
+                    user.setEmail(guestEmail);
+                    user.setUsername(request.get("name") != null ? request.get("name").toString() : "Guest");
+                    user.setPassword(""); // Guest user
+                    user = userRepository.save(user);
+                }
+            }
             
             // Get shipping details
             String name = request.get("name") != null ? request.get("name").toString() : user.getUsername();
@@ -56,20 +106,25 @@ public class OrderController {
             List<Map<String, Object>> items = (List<Map<String, Object>>) request.get("items");
             
             if (items == null || items.isEmpty()) {
-                // Get items from cart
-                List<CartItem> cartItems = cartItemRepository.findByUser(user);
-                if (cartItems.isEmpty()) {
-                    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                            .body(Map.of("message", "No items provided and cart is empty"));
+                // Get items from cart (if user exists and is not newly created)
+                if (user != null && user.getId() != null) {
+                    List<CartItem> cartItems = cartItemRepository.findByUser(user);
+                    if (!cartItems.isEmpty()) {
+                        // Convert cart items to order items
+                        items = new ArrayList<>();
+                        for (CartItem cartItem : cartItems) {
+                            Map<String, Object> item = new HashMap<>();
+                            item.put("productId", cartItem.getProduct().getId());
+                            item.put("quantity", cartItem.getQuantity());
+                            items.add(item);
+                        }
+                    }
                 }
                 
-                // Convert cart items to order items
-                items = new ArrayList<>();
-                for (CartItem cartItem : cartItems) {
-                    Map<String, Object> item = new HashMap<>();
-                    item.put("productId", cartItem.getProduct().getId());
-                    item.put("quantity", cartItem.getQuantity());
-                    items.add(item);
+                // If still no items, return error
+                if (items == null || items.isEmpty()) {
+                    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                            .body(Map.of("message", "No items provided in the order"));
                 }
             }
             
@@ -128,7 +183,7 @@ public class OrderController {
     }
     
     // Get all orders for a user
-    @GetMapping
+    @GetMapping({"/orders", "/api/orders"})
     public ResponseEntity<?> getOrders(@RequestParam(required = false) Long userId) {
         try {
             List<Order> orders;
@@ -151,7 +206,7 @@ public class OrderController {
     }
     
     // Get single order by ID
-    @GetMapping("/{id}")
+    @GetMapping({"/orders/{id}", "/api/orders/{id}"})
     public ResponseEntity<?> getOrderById(@PathVariable Long id) {
         try {
             Order order = orderRepository.findById(id)
@@ -166,7 +221,7 @@ public class OrderController {
     }
     
     // Update order status
-    @PutMapping("/{id}/status")
+    @PutMapping({"/orders/{id}/status", "/api/orders/{id}/status"})
     public ResponseEntity<?> updateOrderStatus(@PathVariable Long id, @RequestBody Map<String, String> request) {
         try {
             String status = request.get("status");
@@ -185,6 +240,146 @@ public class OrderController {
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(Map.of("message", "Error updating order status: " + e.getMessage()));
+        }
+    }
+    
+    // Get orders by user ID
+    @GetMapping({"/api/orders/user/{userId}", "/orders/user/{userId}"})
+    public ResponseEntity<?> getOrdersByUserId(@PathVariable String userId) {
+        try {
+            System.out.println("=== DEBUG: Fetching orders for userId: " + userId + " ===");
+            Users user = null;
+            
+            // Try to parse as Long first (for numeric user IDs)
+            try {
+                Long userIdLong = Long.valueOf(userId);
+                user = userRepository.findById(userIdLong).orElse(null);
+                System.out.println("DEBUG: Tried numeric ID lookup, user found: " + (user != null));
+            } catch (NumberFormatException e) {
+                // Not a number, treat as Firebase UID - find by username or email
+                System.out.println("DEBUG: Not a numeric ID, treating as Firebase UID");
+                user = userRepository.findByUsername(userId);
+                System.out.println("DEBUG: Username lookup result: " + (user != null));
+                if (user == null) {
+                    user = userRepository.findByEmail(userId);
+                    System.out.println("DEBUG: Email lookup result: " + (user != null));
+                }
+            }
+            
+            if (user == null) {
+                System.out.println("DEBUG: No user found for userId: " + userId);
+                // Check if this userId matches any order's email directly
+                List<Order> ordersByEmail = orderRepository.findAll().stream()
+                    .filter(o -> userId.equals(o.getEmail()))
+                    .sorted((o1, o2) -> o2.getCreatedAt().compareTo(o1.getCreatedAt()))
+                    .toList();
+                
+                if (!ordersByEmail.isEmpty()) {
+                    System.out.println("DEBUG: Found " + ordersByEmail.size() + " orders by email match");
+                    List<OrderResponseDTO> orderDTOs = orderService.convertToDTOList(ordersByEmail);
+                    return ResponseEntity.ok(Map.of(
+                        "success", true,
+                        "count", orderDTOs.size(),
+                        "orders", orderDTOs
+                    ));
+                }
+                
+                return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "count", 0,
+                    "orders", new ArrayList<>()
+                ));
+            }
+            
+            System.out.println("DEBUG: User found - ID: " + user.getId() + ", Email: " + user.getEmail());
+            List<Order> orders = orderRepository.findByUserOrderByCreatedAtDesc(user);
+            System.out.println("DEBUG: Found " + orders.size() + " orders for user");
+            List<OrderResponseDTO> orderDTOs = orderService.convertToDTOList(orders);
+            
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "count", orderDTOs.size(),
+                "orders", orderDTOs
+            ));
+            
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("success", false, "message", "Error fetching orders: " + e.getMessage()));
+        }
+    }
+    
+    // Get orders by email
+    @GetMapping({"/api/orders/user/email/{email}", "/orders/user/email/{email}"})
+    public ResponseEntity<?> getOrdersByEmail(@PathVariable String email) {
+        try {
+            Users user = userRepository.findByEmail(email);
+            if (user == null) {
+                return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "count", 0,
+                    "orders", new ArrayList<>()
+                ));
+            }
+            
+            List<Order> orders = orderRepository.findByUserOrderByCreatedAtDesc(user);
+            List<OrderResponseDTO> orderDTOs = orderService.convertToDTOList(orders);
+            
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "count", orderDTOs.size(),
+                "orders", orderDTOs
+            ));
+            
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "message", "Error fetching orders: " + e.getMessage()));
+        }
+    }
+    
+    // Debug: Get all users (for troubleshooting)
+    @GetMapping({"/api/debug/users", "/debug/users"})
+    public ResponseEntity<?> getAllUsers() {
+        try {
+            List<Users> users = userRepository.findAll();
+            List<Map<String, Object>> userList = users.stream()
+                .map(u -> {
+                    Map<String, Object> map = new HashMap<>();
+                    map.put("id", u.getId());
+                    map.put("username", u.getUsername() != null ? u.getUsername() : "null");
+                    map.put("email", u.getEmail() != null ? u.getEmail() : "null");
+                    return map;
+                })
+                .toList();
+            return ResponseEntity.ok(Map.of("success", true, "count", users.size(), "users", userList));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "message", e.getMessage()));
+        }
+    }
+    
+    // Debug: Get all orders (for troubleshooting)
+    @GetMapping({"/api/debug/orders", "/debug/orders"})
+    public ResponseEntity<?> getAllOrdersDebug() {
+        try {
+            List<Order> orders = orderRepository.findAllByOrderByCreatedAtDesc();
+            List<Map<String, Object>> orderList = orders.stream()
+                .map(o -> {
+                    Map<String, Object> map = new HashMap<>();
+                    map.put("orderId", o.getId());
+                    map.put("userId", o.getUser() != null ? o.getUser().getId() : null);
+                    map.put("customerEmail", o.getEmail());
+                    map.put("customerName", o.getName());
+                    map.put("totalAmount", o.getTotalAmount());
+                    map.put("status", o.getStatus());
+                    map.put("createdAt", o.getCreatedAt().toString());
+                    return map;
+                })
+                .toList();
+            return ResponseEntity.ok(Map.of("success", true, "count", orders.size(), "orders", orderList));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "message", e.getMessage()));
         }
     }
 }

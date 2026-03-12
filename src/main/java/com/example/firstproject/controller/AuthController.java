@@ -113,6 +113,37 @@ public class AuthController {
     }
     
     /**
+     * Get all users with their details
+     * Accessible at /api/auth/users
+     */
+    @GetMapping("/users")
+    public ResponseEntity<Map<String, Object>> getAllUsers() {
+        try {
+            var users = firebaseAuthService.getAllUsers();
+            
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "count", users.size(),
+                    "users", users.stream().map(authUser -> Map.of(
+                            "id", authUser.getId(),
+                            "firebaseUid", authUser.getFirebaseUid() != null ? authUser.getFirebaseUid() : "",
+                            "phoneNumber", authUser.getPhoneNumber() != null ? authUser.getPhoneNumber() : "",
+                            "email", authUser.getEmail() != null ? authUser.getEmail() : "",
+                            "displayName", authUser.getDisplayName() != null ? authUser.getDisplayName() : "",
+                            "createdAt", authUser.getCreatedAt() != null ? authUser.getCreatedAt().toString() : "",
+                            "lastLogin", authUser.getLastLogin() != null ? authUser.getLastLogin().toString() : ""
+                    )).toList()
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                            "success", false,
+                            "message", "Failed to fetch users: " + e.getMessage()
+                    ));
+        }
+    }
+    
+    /**
      * Health check endpoint
      */
     @GetMapping("/health")

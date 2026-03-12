@@ -1,18 +1,19 @@
 package com.example.firstproject.service;
 
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
 import com.example.firstproject.entity.AuthUser;
 import com.example.firstproject.repository.AuthUserRepository;
 import com.example.firstproject.util.JwtUtil;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseAuthException;
 import com.google.firebase.auth.FirebaseToken;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
-
-import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
 
 @Service
 public class FirebaseAuthService {
@@ -124,6 +125,13 @@ public class FirebaseAuthService {
      */
     public Optional<AuthUser> getUserByPhoneNumber(String phoneNumber) {
         return authUserRepository.findByPhoneNumber(phoneNumber);
+    }
+    
+    /**
+     * Get all users
+     */
+    public java.util.List<AuthUser> getAllUsers() {
+        return authUserRepository.findAll();
     }
     
     /**
