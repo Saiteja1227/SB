@@ -3,6 +3,7 @@ package com.example.firstproject.config;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -27,16 +28,14 @@ public class SecurityConfig {
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         // Public endpoints - no authentication required
+                        .requestMatchers(HttpMethod.POST, "/api/orders", "/orders").permitAll()  // Allow order creation
+                        .requestMatchers(HttpMethod.GET, "/api/orders/user/**", "/orders/user/**").permitAll()  // Allow fetching user orders
                         .requestMatchers(
                                 "/",
                                 "/api/auth/**",
                                 "/api/register",
                                 "/api/login",
                                 "/api/products/**",
-                                "/api/orders",              // Allow creating orders (POST)
-                                "/api/orders/user/**",      // Allow fetching user orders
-                                "/orders",                  // Allow creating orders (POST) without /api
-                                "/orders/user/**",          // Allow fetching user orders without /api
                                 "/api/debug/**",
                                 "/debug/**",
                                 "/register",
@@ -47,8 +46,6 @@ public class SecurityConfig {
                         // Protected endpoints - authentication required  
                         .requestMatchers(
                                 "/api/cart/**",
-                                "/api/orders/{id}",         // Specific order by ID requires auth
-                                "/api/orders/{id}/status",  // Update order status requires auth
                                 "/api/update",
                                 "/api/delete"
                         ).authenticated()
